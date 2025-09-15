@@ -1,0 +1,21 @@
+{
+    "name": "users",
+    "$schema": "../../node_modules/nx/schemas/project-schema.json",
+    "projectType": "library",
+    "sourceRoot": "libs/users/src",
+    "prefix": "placeos",
+    "targets": {
+        "lint": {
+            "executor": "@nx/eslint:lint",
+            "outputs": ["{options.outputFile}"]
+        },
+        "test": {
+            "executor": "@nx/jest:jest",
+            "outputs": ["{workspaceRoot}/coverage/libs/users"],
+            "options": {
+                "jestConfig": "libs/users/jest.config.ts"
+            }
+        }
+    },
+    "tags": []
+}

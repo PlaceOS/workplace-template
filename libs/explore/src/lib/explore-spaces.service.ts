@@ -1,0 +1,313 @@
+import { inject, Injectable, OnDestroy } from '@angular/core';
+import { MatDialog } from '@angular/material/dialog';
+import { ViewAction, ViewerFeature } from '@placeos/svg-viewer';
+import { getModule, showMetadata } from '@placeos/ts-client';
+import { combineLatest, Observable, of } from 'rxjs';
+import {
+    catchError,
+    filter,
+    map,
+    shareReplay,
+    switchMap,
+} from 'rxjs/operators';
+
+import {
+    AsyncHandler,
+    BookingRuleset,
+    currentUser,
+    HashMap,
+    i18n,
+    nextValueFrom,
+    rulesForResource,
+    SettingsService,
+} from '@placeos/common';
+import { notifyError } from 'libs/common/src/lib/notifications';
+import { CalendarEvent } from 'libs/events/src/lib/event.class';
+import { EventFormService } from 'libs/events/src/lib/new-event-form.service';
+import { OrganisationService } from 'libs/organisation/src/lib/organisation.service';
+import { Space } from 'libs/spaces/src/lib/space.class';
+
+import { ExploreBookQrComponent } from './explore-book-qr.component';
+import { ExploreBookingModalComponent } from './explore-booking-modal.component';
+import { ExploreIconComponent } from './explore-icon.component';
+import { ExploreSpaceInfoComponent } from './explore-space-info.component';
+import { ExploreStateService } from './explore-state.service';
+
+export const DEFAULT_COLOURS = {
+    free: '#43a047',
+    pending: '#ffb300',
+    reserved: '#e65100',
+    busy: '#e53935',
+    'signs-of-life': '#1565c0',
+    'not-bookable': '#757575',
+    unknown: '#757575',
+};
+
+@Injectable()
+export class ExploreSpacesService extends AsyncHandler implements OnDestroy {
+    private _state = inject(ExploreStateService);
+    private _settings = inject(SettingsService);
+    private _event_form = inject(EventFormService);
+    private _dialog = inject(MatDialog);
+    private _org = inject(OrganisationService);
+
+    private _bookings: Record<string, CalendarEvent[]> = {};
+    private _statuses: Record<string, string> = {};
+    private _presence: Record<string, boolean> = {};
+    private _panning = true;
+    private _last_action = '';
+
+    public readonly booking_rules: Observable<BookingRuleset[]> =
+        this._org.active_building.pipe(
+            filter((bld) => !!bld),
+            switchMap((bld) =>
+                showMetadata(bld.id, `room_booking_rules`).pipe(
+                    catchError(() => of({ details: [] })),
+                ),
+            ),
+            map((_) => (_?.details instanceof Array ? _.details : [])),
+            shareReplay(1),
+        );
+
+    public readonly room_alerts = this._org.active_building.pipe(
+        filter((bld) => !!bld),
+        switchMap(() =>
+            showMetadata(this._org.organisation.id, `room_alerts`).pipe(
+                catchError(() => of({ details: {} })),
+            ),
+        ),
+        map((_) => _.details || {}),
+        shareReplay(1),
+    );
+
+    private _bind = combineLatest([
+        this._state.spaces,
+        this._state.options,
+    ]).pipe(
+        filter(([_, { is_public }]) => !is_public),
+        map(([list]) => {
+            this.unsubWith('b-');
+            this.unsubWith('s-');
+            this.unsubWith('c-');
+            this._statuses = {};
+            if (!list?.length) return;
+            for (const space of list) {
+                const mod = getModule(space.id, 'Bookings');
+                let binding = mod.variable('bookings');
+                this.subscription(
+                    `b-${space.id}`,
+                    binding.bindThenSubscribe((d) =>
+                        this.handleBookingsChange(list, space, d),
+                    ),
+                );
+                binding = mod.variable('status');
+                this.subscription(
+                    `s-${space.id}`,
+                    binding.bindThenSubscribe((d) =>
+                        this.handleStatusChange(list, space, d),
+                    ),
+                );
+                binding = mod.variable('presence');
+                this.subscription(
+                    `c-${space.id}`,
+                    binding.bindThenSubscribe((d) =>
+                        this.handlePresenceChange(list, space, d),
+                    ),
+                );
+            }
+            this.updateActions(list);
+            this._updateHoverElements(list);
+        }),
+    );
+
+    constructor() {
+        super();
+        this.subscription('spaces', this._bind.subscribe());
+    }
+
+    public async bookSpace(space: Space, force = false) {
+        if (this._panning && this._last_action === 'down') return;
+        const booking_rules = await nextValueFrom(this.booking_rules);
+        const room_alerts = await nextValueFrom(this.room_alerts);
+        const { hidden } =
+            rulesForResource(
+                {
+                    date: Date.now(),
+                    duration: 60,
+                    resource: space,
+                    host: currentUser(),
+                },
+                booking_rules,
+            ) || {};
+        if (hidden) {
+            return notifyError(i18n('EXPLORE.SPACES_PERMISSIONS_ERROR'));
+        }
+        if (
+            (this._statuses[space.id] !== 'free' && !force) ||
+            !space.bookable
+        ) {
+            return notifyError(
+                i18n('EXPLORE.SPACES_UNAVAILABLE_ERROR', {
+                    name: space.display_name || space.name,
+                }),
+            );
+        }
+        this._event_form.newForm();
+        this._event_form.form.patchValue({
+            host: currentUser()?.email,
+            resources: [space],
+        });
+        if (room_alerts[space.id]?.[0] === 'closed') {
+            return notifyError(`${room_alerts[space.id][1]}`);
+        }
+        if (this._settings.get('app.events.booking_unavailable')) {
+            return this._event_form.openEventLinkModal();
+        }
+        this._dialog.open(
+            (this._settings.get('app.explore.show_booking_qr')
+                ? ExploreBookQrComponent
+                : ExploreBookingModalComponent) as any,
+            {
+                data: { space, alert: room_alerts[space.id] },
+            },
+        );
+    }
+
+    public handleBookingsChange(
+        spaces: Space[],
+        space: Space,
+        bookings: HashMap[],
+    ) {
+        if (!bookings) return;
+        this._bookings[space.id] = bookings.map((i) => new CalendarEvent(i));
+        this.timeout(
+            'update_hover_els',
+            () => this._updateHoverElements(spaces),
+            100,
+        );
+    }
+
+    public handleStatusChange(spaces: Space[], space: Space, status: string) {
+        if (space.bookable) this._statuses[space.id] = status || 'free';
+        else delete this._statuses[space.id];
+        this.timeout(
+            'update_statuses',
+            () => {
+                this.clearTimeout('update_hover_els');
+                this._updateStatus(spaces);
+                this._updateHoverElements(spaces);
+            },
+            100,
+        );
+    }
+
+    public handlePresenceChange(
+        spaces: Space[],
+        space: Space,
+        presence: boolean,
+    ) {
+        this._presence[space.id] = presence;
+        this.timeout('update_icons', () => this._updateIcons(spaces), 100);
+    }
+
+    private async _updateStatus(spaces: Space[]) {
+        const style_map = {};
+        const colours = this._settings.get('app.explore.colors') || {};
+        for (const space of spaces) {
+            if (!this._statuses[space.id]) continue;
+            const status = this._statuses[space.id];
+            style_map[`#${space.map_id}`] = {
+                fill:
+                    colours[`space-${status}`] ||
+                    colours[`${status}`] ||
+                    DEFAULT_COLOURS[`${status}`],
+                opacity: 0.6,
+            };
+        }
+        this._state.setStyles('spaces', style_map);
+    }
+
+    private _updateHoverElements(spaces: Space[]) {
+        const features: ViewerFeature[] = [];
+        for (const space of spaces) {
+            if (!space.map_id) continue;
+            features.push({
+                location: space.map_id,
+                full_size: true,
+                no_scale: true,
+                content: ExploreSpaceInfoComponent,
+                z_index: 10,
+                data: {
+                    space: new Space(space),
+                    events: this._bookings[space.id],
+                    status: this._statuses[space.id] || 'not-bookable',
+                },
+            } as any);
+        }
+        this._state.setFeatures('spaces', features);
+    }
+
+    private _updateIcons(spaces: Space[]) {
+        if (!this._settings.get('app.show_presence_indicators')) return;
+        const features: ViewerFeature[] = [];
+        for (const space of spaces) {
+            if (!space.map_id) continue;
+            features.push({
+                location: space.map_id,
+                content: ExploreIconComponent,
+                data: {
+                    icon: {
+                        class: 'material-symbols-rounded',
+                        content: 'sensor_occupied',
+                    },
+                    color: this._presence[space.id] ? 'var(--su)' : 'var(--bc)',
+                    text_color: this._presence[space.id]
+                        ? 'var(--suc)'
+                        : 'var(--b1)',
+                },
+                z_index: 98,
+            } as ViewerFeature);
+        }
+        this._state.setFeatures('spaces-presence', features);
+    }
+
+    private updateActions(spaces: Space[]) {
+        const actions: ViewAction[] = [];
+        for (const space of spaces) {
+            if (!space.map_id) continue;
+            for (const action of ['mousedown', 'touchstart']) {
+                actions.push({
+                    id: space.map_id,
+                    action: action as any,
+                    priority: 5,
+                    callback: () => {
+                        this._panning = false;
+                        this.timeout(
+                            'panning',
+                            () => (this._panning = true),
+                            300,
+                        );
+                        this._last_action = 'down';
+                    },
+                });
+            }
+            for (const action of ['mouseup', 'touchend']) {
+                actions.push({
+                    id: space.map_id,
+                    action: action as any,
+                    priority: 5,
+                    callback: () => {
+                        this.bookSpace(space);
+                        this._last_action = 'up';
+                    },
+                });
+            }
+        }
+
+        this.timeout(
+            'set-actions',
+            () => this._state.setActions('spaces', actions),
+            50,
+        );
+    }
+}

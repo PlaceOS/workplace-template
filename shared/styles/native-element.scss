@@ -1,0 +1,76 @@
+input,
+textarea {
+    user-select: text;
+    background: none;
+    caret-color: var(--s) !important;
+
+    span[required] {
+        color: var(--wa);
+    }
+
+    &::placeholder {
+        color: var(--b3);
+    }
+}
+
+label {
+    span[required] {
+        color: var(--wa);
+    }
+}
+
+.theme-dark {
+    input {
+        color-scheme: dark;
+    }
+    input::placeholder {
+        color: inherit;
+        opacity: 0.6;
+    }
+}
+
+a[link] {
+    color: var(--in);
+    text-decoration: underline;
+    cursor: pointer;
+
+    &:hover {
+        color: var(--inf);
+    }
+
+    &:active {
+        color: var(--p);
+    }
+}
+
+:not(.mat-form-field-label-wrapper, .mdc-form-field) > label {
+    width: 100%;
+    font-size: 0.875rem;
+    margin-bottom: 0.25rem;
+    min-width: 100%;
+    font-weight: bold;
+
+    > span:first-child {
+        color: var(--wa);
+    }
+
+    &.error {
+        color: var(--er);
+    }
+}
+
+#placeos {
+    .svg-viewer__label {
+        min-width: 12rem;
+    }
+
+    ::placeholder,
+    .mat-form-field-label,
+    .mat-mdc-select-placeholder {
+        color: var(--n);
+    }
+
+    input {
+        caret-color: var(--p);
+    }
+}
