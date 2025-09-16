@@ -1,0 +1,419 @@
+import { inject, Injectable } from '@angular/core';
+import { MatDialog } from '@angular/material/dialog';
+import {
+    AsyncHandler,
+    BookingRuleset,
+    currentUser,
+    flatten,
+    i18n,
+    nextValueFrom,
+    notifyError,
+    notifySuccess,
+    rulesForResource,
+    SettingsService,
+} from '@placeos/common';
+import { PlaceZone, showMetadata } from '@placeos/ts-client';
+import { StaffUser } from '@placeos/users';
+import {
+    addDays,
+    endOfDay,
+    endOfMinute,
+    getUnixTime,
+    isSameDay,
+    setHours,
+    startOfDay,
+    startOfMinute,
+} from 'date-fns';
+import { BehaviorSubject, combineLatest, forkJoin, Observable, of } from 'rxjs';
+import {
+    catchError,
+    debounceTime,
+    filter,
+    map,
+    shareReplay,
+    switchMap,
+} from 'rxjs/operators';
+
+import { BookingFormService } from 'libs/bookings/src/lib/booking-form.service';
+import { queryBookings } from 'libs/bookings/src/lib/bookings.fn';
+import { ParkingService } from 'libs/bookings/src/lib/parking.service';
+import { OrganisationService } from 'libs/organisation/src/lib/organisation.service';
+import { ExploreParkingInfoComponent } from './explore-parking-info.component';
+import { DEFAULT_COLOURS } from './explore-spaces.service';
+import { ExploreStateService } from './explore-state.service';
+import { SetDatetimeModalComponent } from './set-datetime-modal.component';
+
+export interface ParkingSpace {
+    id: string;
+    map_id: string;
+    name: string;
+    notes: string;
+    assigned_to: string;
+    zone_id?: string;
+    zone?: PlaceZone;
+    groups?: string[];
+}
+
+export interface ParkingOptions {
+    enable_booking?: boolean;
+    date?: number;
+    all_day?: boolean;
+    zones?: string[];
+    host?: StaffUser;
+    custom?: boolean;
+    use_api?: boolean;
+    user?: string;
+}
+
+@Injectable()
+export class ExploreParkingService extends AsyncHandler {
+    private _org = inject(OrganisationService);
+    private _state = inject(ExploreStateService);
+    private _settings = inject(SettingsService);
+    private _bookings = inject(BookingFormService);
+    private _parking = inject(ParkingService);
+    private _dialog = inject(MatDialog);
+
+    private _options = new BehaviorSubject<ParkingOptions>({});
+    private _poll = new BehaviorSubject<number>(0);
+
+    public readonly options = this._options.asObservable();
+    public on_book: (ParkingSpace) => Promise<void> = null;
+
+    /** List of available parking levels for the active building */
+    public readonly levels = this._org.active_levels.pipe(
+        map((l) => l.filter((_) => _.tags.includes('parking'))),
+    );
+
+    public readonly booking_rules: Observable<BookingRuleset[]> =
+        this._org.active_building.pipe(
+            filter((bld) => !!bld),
+            switchMap((bld) =>
+                showMetadata(bld.id, `parking_booking_rules`).pipe(
+                    catchError(() => of({ details: [] })),
+                ),
+            ),
+            map((_) => (_?.details instanceof Array ? _.details : [])),
+            shareReplay(1),
+        );
+
+    /** List of current bookings for the current building */
+    public readonly events = combineLatest([
+        this._org.active_building,
+        this._state.options,
+        this._options,
+        this._poll,
+    ]).pipe(
+        debounceTime(300),
+        switchMap(([bld, { is_public }, opts]) =>
+            is_public
+                ? of([])
+                : queryBookings({
+                      period_start: getUnixTime(
+                          startOfMinute(opts.date || Date.now()),
+                      ),
+                      period_end: getUnixTime(
+                          endOfMinute(opts.date || Date.now()),
+                      ),
+                      type: 'parking',
+                      zones: this._settings.get('app.use_region')
+                          ? bld?.parent_id
+                          : bld?.id,
+                      rejected: false,
+                  }),
+        ),
+        shareReplay(1),
+    );
+    /** Any event that the selected user has for the current date */
+    public readonly user_events = combineLatest([this._options]).pipe(
+        switchMap(([_]) =>
+            queryBookings({
+                period_start: getUnixTime(startOfDay(_.date || Date.now())),
+                period_end: getUnixTime(endOfDay(_.date || Date.now())),
+                type: 'parking',
+                email: _?.user || currentUser()?.email,
+            }),
+        ),
+        shareReplay(1),
+    );
+
+    /** List of parking spaces for the active building */
+    public readonly spaces: Observable<ParkingSpace[]> = this.levels.pipe(
+        switchMap((_) =>
+            forkJoin(
+                _.map((l) =>
+                    showMetadata(l.id, 'parking-spaces').pipe(
+                        map((d) =>
+                            (d.details instanceof Array ? d.details : []).map(
+                                (s) => ({ ...s, zone_id: l.id }),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        map((_) => flatten(_)),
+        shareReplay(1),
+    );
+
+    public readonly active_spaces = combineLatest([
+        this.spaces,
+        this._state.level,
+    ]).pipe(
+        map(([spaces, level]) => spaces.filter((_) => _.zone_id === level.id)),
+    );
+
+    private _users: Record<string, string> = {};
+    private _plate_numbers: Record<string, string> = {};
+
+    /** Available parking spaces for the current level and date */
+    public readonly available_spaces = combineLatest([
+        this.events,
+        this.active_spaces,
+        this._parking.users,
+        this.booking_rules,
+        this._options,
+    ]).pipe(
+        map(([events, spaces, users, rules, { date }]) => {
+            const available = spaces.filter((space) => {
+                const event = events.find(
+                    (e) => e.asset_id === space.id && !e.rejected,
+                );
+                const level = this._org.levelWithID([space.zone_id]);
+                const assigned = `${
+                    event?.user_email || space.assigned_to || ''
+                }`.toLowerCase();
+                const user = users.find(
+                    (u) => u.email.toLowerCase() === assigned.toLowerCase(),
+                );
+                const is_restricted = rulesForResource(
+                    {
+                        date: date || Date.now(),
+                        duration: 60,
+                        host: currentUser(),
+                        resource: {
+                            id: space.id,
+                            zones: [level.parent_id, level.id],
+                        },
+                    },
+                    rules,
+                )?.hidden;
+                this._users[space.id] = assigned;
+                this._plate_numbers[space.id] =
+                    event?.extension_data?.plate_number ||
+                    user?.plate_number ||
+                    undefined;
+                return !event && !is_restricted;
+            });
+            this._updateParkingSpaces(spaces, available);
+            return available;
+        }),
+    );
+
+    constructor() {
+        super();
+        this.subscription('spaces', this.available_spaces.subscribe());
+        this.setOptions({
+            enable_booking:
+                this._settings.get('app.parking.enable_maps') !== false,
+        });
+    }
+
+    public startPolling() {
+        this.interval('poll', () => this._poll.next(Date.now()), 10 * 1000);
+        this._poll.next(Date.now());
+        return () => this.stopPolling();
+    }
+
+    public stopPolling() {
+        this.clearInterval('poll');
+    }
+
+    public setOptions(options: Partial<ParkingOptions>) {
+        this._options.next({ ...this._options.getValue(), ...options });
+    }
+
+    private async _updateParkingSpaces(
+        spaces: ParkingSpace[],
+        available: ParkingSpace[],
+    ) {
+        const styles = {};
+        const features = [];
+        const actions = [];
+        const colours = this._settings.get('app.explore.colors') || {};
+        let options = this._options.getValue();
+        const assigned_space = await nextValueFrom(
+            this._parking.assigned_space,
+        );
+        const deny_parking_access = await nextValueFrom(
+            this._parking.deny_parking_access,
+        );
+        const booked_space = await nextValueFrom(this._parking.booked_space);
+        for (const space of spaces) {
+            const can_book = !!available.find((_) => _.id === space.id);
+            const is_workplace =
+                this._settings.app_name.toLowerCase().includes('workplace') ||
+                this._settings.app_name.toLowerCase().includes('staff');
+            const is_assigned = is_workplace ? false : !!space.assigned_to;
+            const id = space.map_id || space.id;
+            const status = is_assigned
+                ? can_book
+                    ? 'pending'
+                    : 'busy'
+                : can_book
+                  ? 'free'
+                  : 'busy';
+            styles[`#${id}`] = {
+                fill:
+                    colours[`parking-${status}`] ||
+                    colours[`${status}`] ||
+                    DEFAULT_COLOURS[`${status}`],
+                opacity: 0.6,
+            };
+            features.push({
+                location: `${id}`,
+                content: ExploreParkingInfoComponent,
+                z_index: 20,
+                hover: true,
+                data: {
+                    ...space,
+                    user: this._users[space.id],
+                    plate_number: this._plate_numbers[space.id],
+                    status:
+                        status === 'pending' && is_assigned
+                            ? 'reserved'
+                            : status,
+                },
+            });
+            if (!can_book) continue;
+            const book_fn = async () => {
+                if (this.on_book) {
+                    await this.on_book(space);
+                    this._poll.next(Date.now());
+                    return;
+                }
+                if (deny_parking_access) {
+                    return notifyError(
+                        i18n('EXPLORE.PARKING_PERMISSIONS_ERROR', {
+                            name: space.zone?.display_name || space.zone?.name,
+                        }),
+                    );
+                }
+                console.log('Booked Space:', booked_space);
+                if (assigned_space && booked_space) {
+                    return notifyError(
+                        i18n('EXPLORE.PARKING_ASSIGNED_ERROR', {
+                            name: space.name || space.id,
+                        }),
+                    );
+                }
+                if (booked_space) {
+                    return notifyError(i18n('EXPLORE.PARKING_EXISTING_ERROR'));
+                }
+                if (status !== 'free') {
+                    return notifyError(
+                        i18n('EXPLORE.PARKING_AVAILABLE_ERROR', {
+                            name: space.name || 'Parking Space',
+                        }),
+                    );
+                }
+                if (
+                    space.groups?.length &&
+                    !space.groups.find((_) => currentUser().groups.includes(_))
+                ) {
+                    return notifyError(
+                        i18n('EXPLORE.PARKING_GROUP_ERROR', {
+                            name: space.name,
+                        }),
+                    );
+                }
+                this._bookings.newForm('parking');
+                this._bookings.setOptions({ type: 'parking' });
+                options = this._options.getValue();
+                let user = options.host || currentUser();
+                const user_email = user?.email;
+                const zone =
+                    this._org.levelWithID([
+                        space.zone_id || (space as any).zone,
+                    ]) || this._state.active_level;
+                const date =
+                    !options.date || isSameDay(options.date, Date.now())
+                        ? startOfMinute(Date.now()).valueOf()
+                        : setHours(options.date, 8).valueOf();
+                this._bookings.form.patchValue({
+                    resources: [space],
+                    asset_id: space.id,
+                    asset_name: space.name,
+                    date,
+                    duration: 11 * 60,
+                    all_day: true,
+                    map_id: space?.map_id || space?.id,
+                    description: space.name,
+                    user,
+                    user_email,
+                    booking_type: 'parking',
+                    zones: [
+                        this._org.organisation.id,
+                        this._org.region?.id,
+                        zone.parent_id,
+                        zone.id,
+                    ],
+                });
+                await this._bookings.confirmPost().catch((e) => {
+                    if (e === 'User cancelled') throw e;
+                    notifyError(
+                        i18n('EXPLORE.PARKING_BOOKING_ERROR', {
+                            name: space.name || space.id,
+                            error: e.message || e.error || e,
+                        }),
+                    );
+                    throw e;
+                });
+                notifySuccess(
+                    i18n('EXPLORE.PARKING_BOOKING_SUCCESS', {
+                        name: space.name || space.id,
+                    }),
+                );
+                this.timeout('poll', () => this._poll.next(Date.now()), 1000);
+            };
+            actions.push({
+                id,
+                action: 'click',
+                priority: 10,
+                callback: book_fn,
+            });
+        }
+        this._state.setActions(
+            'parking',
+            options.enable_booking ? actions : [],
+        );
+        this._state.setStyles('parking', styles);
+        this._state.setFeatures('parking', features);
+    }
+
+    private async _setBookingTime(
+        date: number,
+        duration: number,
+        host: boolean = false,
+        resource: any = null,
+    ) {
+        let user = null;
+        if (!!this._settings.get('app.parking.allow_time_changes')) {
+            const until = endOfDay(
+                addDays(
+                    Date.now(),
+                    this._settings.get('app.parking.available_period') || 90,
+                ),
+            );
+            const ref = this._dialog.open(SetDatetimeModalComponent, {
+                data: { date, duration, until, host, resource },
+            });
+            const details = await ref.afterClosed().toPromise();
+            if (!details) throw 'User cancelled';
+            date = details.date;
+            duration = details.duration;
+            user = details.user;
+        }
+        return { date, duration, user };
+    }
+}
