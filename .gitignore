@@ -59,3 +59,4 @@ locales.tsv
 # Sentry Config File
 .sentryclirc
 .github/instructions/nx.instructions.md
+.env
