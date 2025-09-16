@@ -6,7 +6,7 @@
         "ng": "npx nx",
         "postinstall": "node ./config/version.js",
         "nx": "npx nx",
-        "start": "npx nx serve",
+        "start": "nx serve",
         "build": "npx nx build",
         "test": "npx ng test",
         "lint": "npx nx workspace-lint && npx ng lint",
