@@ -103,8 +103,8 @@ export class SettingsService extends AsyncHandler {
         const built = isSameDay(now, time)
             ? `Today at ${format(time, 'h:mma')}`
             : format(time, 'do MMM yyyy, h:mma');
-        log('CORE', `${VERSION.semver}`, null, 'debug', true);
-        log('APP', `${VERSION.hash} | Built: ${built}`, null, 'debug', true);
+        log('CORE', `${VERSION?.semver}`, null, 'debug', true);
+        log('APP', `${VERSION?.hash} | Built: ${built}`, null, 'debug', true);
         this.init();
     }
 
