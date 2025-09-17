@@ -3,10 +3,9 @@
     "version": "1.12.0",
     "license": "MIT",
     "scripts": {
-        "ng": "npx nx",
         "postinstall": "node ./config/version.js",
         "nx": "npx nx",
-        "start": "npx nx serve",
+        "start": "npm run ng:start",
         "build": "npx nx build",
         "test": "npx ng test",
         "lint": "npx nx workspace-lint && npx ng lint",
@@ -29,7 +28,17 @@
         "version": "node ./tools/apply-version.js && npx standard-version",
         "build-all": "npx nx run-many --target=build --parallel=4 --stats-json",
         "test-all": "npx nx run-many --target=test --runInBand --parallel=4",
-        "sentry:sourcemaps": "npx sentry-cli sourcemaps inject --org place-technology --project placeos-dev ./dist/apps && npx sentry-cli sourcemaps upload --org place-technology --project placeos-dev ./dist/apps"
+        "sentry:sourcemaps": "npx sentry-cli sourcemaps inject --org place-technology --project placeos-dev ./dist/apps && npx sentry-cli sourcemaps upload --org place-technology --project placeos-dev ./dist/apps",
+        "ng:start": "node node_modules/@angular/cli/bin/ng serve workplace",
+        "ng:build": "node node_modules/@angular/cli/bin/ng build workplace",
+        "ng:build:prod": "node node_modules/@angular/cli/bin/ng build workplace --configuration=production",
+        "ng:test": "node node_modules/@angular/cli/bin/ng test workplace",
+        "ng:lint": "node node_modules/@angular/cli/bin/ng lint workplace",
+        "ng:e2e": "node node_modules/@angular/cli/bin/ng e2e workplace",
+        "ng:version": "node node_modules/@angular/cli/bin/ng version",
+        "disable-nx": "rm -f node_modules/.bin/ng && cp node_modules/@angular/cli/bin/ng.js node_modules/.bin/ng && chmod +x node_modules/.bin/ng",
+        "restore-nx": "npm run postinstall",
+        "verify-angular-cli": "node verify-angular-cli.js"
     },
     "private": true,
     "dependencies": {

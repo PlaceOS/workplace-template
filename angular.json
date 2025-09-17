@@ -1,0 +1,173 @@
+{
+  "$schema": "./node_modules/@angular/cli/lib/config/schema.json",
+  "version": 1,
+  "newProjectRoot": "apps",
+  "projects": {
+    "workplace": {
+      "projectType": "application",
+      "schematics": {
+        "@schematics/angular:component": {
+          "style": "css"
+        }
+      },
+      "root": "apps/workplace",
+      "sourceRoot": "apps/workplace/src",
+      "prefix": "placeos",
+      "architect": {
+        "build": {
+          "builder": "@angular-devkit/build-angular:application",
+          "options": {
+            "outputPath": "dist/apps/workplace",
+            "index": "apps/workplace/src/index.html",
+            "browser": "apps/workplace/src/main.ts",
+            "polyfills": [],
+            "tsConfig": "apps/workplace/tsconfig.app.json",
+            "baseHref": "./",
+            "assets": [
+              "apps/workplace/src/favicon.ico",
+              "apps/workplace/src/assets",
+              {
+                "glob": "**",
+                "input": "shared/assets",
+                "output": "/assets/"
+              },
+              {
+                "glob": "*.woff2",
+                "input": "node_modules/material-symbols",
+                "output": "/assets/"
+              },
+              {
+                "glob": "oauth-resp.html",
+                "input": "node_modules/@placeos/ts-client/dist/",
+                "output": "/"
+              },
+              {
+                "input": "node_modules/ts-md5/dist/",
+                "output": "/assets",
+                "glob": "*worker.js"
+              },
+              "apps/workplace/src/manifest.webmanifest"
+            ],
+            "styles": [
+              "./node_modules/@angular/material/prebuilt-themes/indigo-pink.css",
+              "apps/workplace/src/styles.css",
+              "shared/styles/application.scss",
+              "shared/styles/custom-element.scss",
+              "shared/styles/native-element.scss",
+              "shared/styles/utility.scss"
+            ],
+            "scripts": [],
+            "fileReplacements": [
+              {
+                "replace": "libs/common/src/lib/settings.ts",
+                "with": "apps/workplace/src/environments/settings.ts"
+              }
+            ]
+          },
+          "configurations": {
+            "production": {
+              "budgets": [
+                {
+                  "type": "initial",
+                  "maximumWarning": "2mb",
+                  "maximumError": "5mb"
+                },
+                {
+                  "type": "anyComponentStyle",
+                  "maximumWarning": "6kb",
+                  "maximumError": "10kb"
+                }
+              ],
+              "outputHashing": "all",
+              "optimization": true,
+              "sourceMap": false,
+              "extractLicenses": true,
+              "namedChunks": false,
+              "fileReplacements": [
+                {
+                  "replace": "libs/mocks/src/index.ts",
+                  "with": "libs/mocks/src/empty.ts"
+                },
+                {
+                  "replace": "apps/workplace/src/environments/environment.ts",
+                  "with": "apps/workplace/src/environments/environment.prod.ts"
+                },
+                {
+                  "replace": "libs/common/src/lib/settings.ts",
+                  "with": "apps/workplace/src/environments/settings.ts"
+                }
+              ],
+              "serviceWorker": "apps/workplace/ngsw-config.json"
+            },
+            "staging": {
+              "optimization": true,
+              "fileReplacements": [
+                {
+                  "replace": "apps/workplace/src/environments/environment.ts",
+                  "with": "apps/workplace/src/environments/environment.prod.ts"
+                },
+                {
+                  "replace": "libs/common/src/lib/settings.ts",
+                  "with": "apps/workplace/src/environments/settings.ts"
+                }
+              ],
+              "serviceWorker": "apps/workplace/ngsw-config.json"
+            },
+            "development": {
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true,
+              "namedChunks": true
+            }
+          },
+          "defaultConfiguration": "production"
+        },
+        "serve": {
+          "builder": "@angular-devkit/build-angular:dev-server",
+          "configurations": {
+            "production": {
+              "buildTarget": "workplace:build:production"
+            },
+            "development": {
+              "buildTarget": "workplace:build:development"
+            }
+          },
+          "defaultConfiguration": "development",
+          "options": {
+            "proxyConfig": "config/proxy.conf.js"
+          }
+        },
+        "extract-i18n": {
+          "builder": "@angular-devkit/build-angular:extract-i18n",
+          "options": {
+            "buildTarget": "workplace:build"
+          }
+        },
+        "test": {
+          "builder": "@angular-devkit/build-angular:jest",
+          "options": {
+            "jestConfig": "apps/workplace/jest.config.ts"
+          }
+        },
+        "lint": {
+          "builder": "@angular-eslint/builder:lint",
+          "options": {
+            "lintFilePatterns": [
+              "apps/workplace/**/*.ts",
+              "apps/workplace/**/*.html"
+            ]
+          }
+        }
+      }
+    }
+  },
+  "cli": {
+    "analytics": false,
+    "cache": {
+      "enabled": true,
+      "path": ".angular/cache",
+      "environment": "all"
+    },
+    "packageManager": "npm"
+  }
+}
