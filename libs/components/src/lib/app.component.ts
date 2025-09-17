@@ -216,6 +216,7 @@ export class AppComponent extends AsyncHandler implements OnInit {
         }
         /** Wait for authentication details to load */
         await setupPlace(settings).catch((_) => console.error(_));
+        console.log('PlaceOS Mock:', isMock())
         await lastValueFrom(this._org.initialised.pipe(first((_) => _)));
         if (this._locale) {
             this._locale.zone_id = this._org.organisation.id;
