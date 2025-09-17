@@ -8,9 +8,7 @@ import { MOCK_LEVELS } from './zone.data';
 import { getUnixTime, subMinutes } from 'date-fns';
 import { MOCK_EVENTS } from './events.data';
 
-export const USER_MOCKS = registerMocks();
-
-function registerMocks() {
+export function registerUserMocks() {
     registerMockEndpoint({
         path: '/api/engine/v2/users/:id',
         metadata: {},
@@ -176,3 +174,6 @@ function registerMocks() {
         return location;
     }
 }
+
+// Legacy export for backward compatibility
+export const USER_MOCKS = registerUserMocks;

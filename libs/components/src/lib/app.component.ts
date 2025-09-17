@@ -51,7 +51,7 @@ import {
     initialiseUploadService,
     OpenStack,
 } from '@placeos/cloud-uploads';
-import { MOCKS } from '@placeos/mocks';
+import { registerAllMocks } from '@placeos/mocks';
 import { setCustomHeaders } from '@placeos/svg-viewer';
 import * as Sentry from '@sentry/angular';
 import { lastValueFrom } from 'rxjs';
@@ -142,8 +142,12 @@ export class AppComponent extends AsyncHandler implements OnInit {
     private _tracing = inject(Sentry.TraceService);
 
     public async ngOnInit() {
-        log('APP', 'MOCKS:', MOCKS);
-        if (MOCKS) {
+        const has_mocks =
+            this._settings.get('mock') ||
+            location.origin.includes('demo.place.tech');
+        log('APP', 'MOCKS enabled:', has_mocks);
+        if (has_mocks) {
+            registerAllMocks({ enableLogging: true });
             this._hotkey.listen(['Control', 'Alt', 'Shift', 'KeyM'], () => {
                 localStorage.setItem(
                     'mock',
@@ -201,9 +205,7 @@ export class AppComponent extends AsyncHandler implements OnInit {
         await firstTruthyValueFrom(this._settings.initialised);
         setAppName(this._settings.get('app.short_name'));
         const settings = this._settings.get('composer') || {};
-        settings.mock = true;
-        // !!this._settings.get('mock') ||
-        // (MOCKS && location.origin.includes('demo.place.tech'));
+        settings.mock = has_mocks;
         /** Add query parameters if removed due to hash routing */
         if (START_QUERY) {
             const query = convertPairStringToMap(START_QUERY.substring(1));
