@@ -201,9 +201,9 @@ export class AppComponent extends AsyncHandler implements OnInit {
         await firstTruthyValueFrom(this._settings.initialised);
         setAppName(this._settings.get('app.short_name'));
         const settings = this._settings.get('composer') || {};
-        settings.mock =
-            !!this._settings.get('mock') ||
-            (MOCKS && location.origin.includes('demo.place.tech'));
+        settings.mock = true;
+        // !!this._settings.get('mock') ||
+        // (MOCKS && location.origin.includes('demo.place.tech'));
         /** Add query parameters if removed due to hash routing */
         if (START_QUERY) {
             const query = convertPairStringToMap(START_QUERY.substring(1));
