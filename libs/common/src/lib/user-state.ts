@@ -1,6 +1,6 @@
 import { showUser } from '@placeos/ts-client';
-import { BehaviorSubject, combineLatest, lastValueFrom } from 'rxjs';
-import { delay, map, retry } from 'rxjs/operators';
+import { BehaviorSubject, combineLatest, lastValueFrom, timer } from 'rxjs';
+import { map, retry } from 'rxjs/operators';
 
 import { StaffUser } from 'libs/users/src/lib/user.class';
 import { replaceUser } from 'libs/users/src/lib/user.pipe';
@@ -23,8 +23,17 @@ setTimeout(() => {
     } catch {}
     combineLatest([showUser('current'), _change])
         .pipe(
-            delay(1000),
-            retry(10),
+            retry({
+                count: 10,
+                delay: (error, count) => {
+                    const delay_ms = Math.min(1000 * Math.pow(2, count), 30000);
+                    console.warn(
+                        `User loading failed, retrying in ${delay_ms}ms (attempt ${count}/10)`,
+                        error,
+                    );
+                    return timer(delay_ms);
+                },
+            }),
             map(([i]) => new StaffUser(i as any)),
         )
         .subscribe((user) => _current_user.next(user));
